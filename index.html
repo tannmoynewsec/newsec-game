@@ -1,0 +1,635 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Newsec ESG Runner</title>
+  <style>
+    :root {
+      --bg: #050b15;
+      --panel: rgba(8, 20, 36, 0.46);
+      --line: rgba(158, 206, 255, 0.28);
+      --text: #e8f2ff;
+      --muted: #a9bfdc;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Segoe UI", Arial, sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(1200px 680px at 10% -15%, rgba(88, 157, 255, 0.14), transparent 60%),
+        radial-gradient(900px 520px at 92% 0%, rgba(81, 219, 245, 0.1), transparent 56%),
+        transparent;
+      display: grid;
+      place-items: center;
+      padding: 1rem;
+    }
+    .app {
+      width: min(980px, 100%);
+      background: rgba(10, 21, 38, 0.22);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: 0 24px 48px rgba(2, 8, 17, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+      backdrop-filter: blur(14px) saturate(130%);
+      -webkit-backdrop-filter: blur(14px) saturate(130%);
+    }
+    .top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: .7rem .9rem;
+      border-bottom: 1px solid var(--line);
+      background: rgba(8, 20, 36, 0.38);
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: .55rem;
+      font-weight: 600;
+      letter-spacing: .3px;
+    }
+    .brand img {
+      width: 28px;
+      height: 28px;
+      object-fit: contain;
+    }
+    .hud {
+      display: flex;
+      gap: .5rem;
+      flex-wrap: wrap;
+      color: var(--muted);
+      font-size: .9rem;
+    }
+    .chip {
+      background: rgba(123, 177, 236, 0.16);
+      border: 1px solid rgba(164, 210, 255, 0.34);
+      border-radius: 999px;
+      padding: .22rem .6rem;
+      color: #e6f2ff;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
+    }
+    #hud-time {
+      font-size: 1.2rem;
+      font-weight: 800;
+      color: #ffffff;
+      border-color: rgba(179, 221, 255, 0.7);
+      padding: .28rem .85rem;
+      background: rgba(104, 183, 255, 0.2);
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: auto;
+      background: transparent;
+    }
+    .controls {
+      border-top: 1px solid var(--line);
+      background: rgba(8, 20, 36, 0.33);
+      color: var(--muted);
+      padding: .55rem .85rem;
+      font-size: .83rem;
+    }
+  </style>
+</head>
+<body>
+  <section class="app">
+    <div class="top">
+      <div class="brand">
+        <img src="logo/Newsec.png" alt="Newsec mascot">
+        <span>Newsec ESG Runner</span>
+      </div>
+      <div class="hud">
+        <span class="chip" id="hud-level">E</span>
+        <span class="chip" id="hud-score">0</span>
+        <span class="chip" id="hud-hp">100</span>
+        <span class="chip" id="hud-ammo">3/3</span>
+        <span class="chip" id="hud-esg">- - -</span>
+        <span class="chip" id="hud-time">60s</span>
+      </div>
+    </div>
+    <canvas id="game" width="960" height="540" aria-label="Game canvas"></canvas>
+    <div class="controls">A/D move · W/Space jump · J or Enter or Click/Tap shoot · Enter/Click start or restart</div>
+  </section>
+
+  <script>
+    const canvas = document.getElementById("game");
+    const ctx = canvas.getContext("2d");
+    const hudLevel = document.getElementById("hud-level");
+    const hudScore = document.getElementById("hud-score");
+    const hudHp = document.getElementById("hud-hp");
+    const hudAmmo = document.getElementById("hud-ammo");
+    const hudEsg = document.getElementById("hud-esg");
+    const hudTime = document.getElementById("hud-time");
+    const playerImg = new Image();
+    playerImg.src = "logo/Single.png";
+    const winLogoImg = new Image();
+    winLogoImg.src = "logo/Newsec.png";
+
+    const GROUND_Y = 460;
+    const keys = {};
+
+    const themes = [
+      { key: "E", from: 0, to: 119, skyA: "#17395f", skyB: "#0f1f34", ground: "#1e4a3f", accent: "#57da9c" },
+      { key: "S", from: 120, to: 259, skyA: "#4a2b65", skyB: "#191a3f", ground: "#2f3e7a", accent: "#d687ff" },
+      { key: "G", from: 260, to: 9999, skyA: "#30435f", skyB: "#172333", ground: "#4b4d5f", accent: "#83bfff" }
+    ];
+
+    const state = {
+      mode: "start",
+      score: 0,
+      hp: 100,
+      time: 0,
+      shootCd: 0,
+      enemyCd: 0,
+      invuln: 0,
+      worldSpeed: 5.8,
+      uiTick: 0,
+      elapsedFrames: 0,
+      lastScoredSecond: 0,
+      ammo: 3,
+      maxAmmo: 3,
+      maxAmmoCap: 9,
+      lastAmmoTick: 0,
+      timeLimitFrames: 30 * 60,
+      checkpointIndex: 0,
+      playerHits: 0,
+      maxHits: 3,
+      roundCompleted: false,
+      flagTouched: false,
+      timeUp: false,
+      message: "",
+      messageTime: 0,
+      bullets: [],
+      enemies: [],
+      particles: [],
+      checkpoints: [
+        { label: "E", atSecond: 10, bonus: 20, received: false },
+        { label: "S", atSecond: 20, bonus: 30, received: false },
+        { label: "G", atSecond: 30, bonus: 40, received: false }
+      ],
+      player: {
+        x: 130,
+        y: GROUND_Y - 54,
+        w: 36,
+        h: 54,
+        vx: 0,
+        vy: 0,
+        jumpPower: -15.2,
+        grounded: true,
+        facing: 1
+      }
+    };
+
+    function resetGame() {
+      state.mode = "run";
+      state.score = 0;
+      state.hp = 100;
+      state.time = 0;
+      state.shootCd = 0;
+      state.enemyCd = 35;
+      state.invuln = 0;
+      state.worldSpeed = 5.8;
+      state.uiTick = 0;
+      state.elapsedFrames = 0;
+      state.lastScoredSecond = 0;
+      state.ammo = 3;
+      state.maxAmmo = 3;
+      state.lastAmmoTick = 0;
+      state.checkpointIndex = 0;
+      state.playerHits = 0;
+      state.roundCompleted = false;
+      state.flagTouched = false;
+      state.timeUp = false;
+      state.message = "";
+      state.messageTime = 0;
+      state.bullets = [];
+      state.enemies = [];
+      state.particles = [];
+      state.checkpoints = [
+        { label: "E", atSecond: 10, bonus: 20, received: false },
+        { label: "S", atSecond: 20, bonus: 30, received: false },
+        { label: "G", atSecond: 30, bonus: 40, received: false }
+      ];
+      state.player.x = 130;
+      state.player.y = GROUND_Y - state.player.h;
+      state.player.vx = 0;
+      state.player.vy = 0;
+      state.player.grounded = true;
+      state.player.facing = 1;
+    }
+
+    function themeForScore(score) {
+      return themes.find((t) => score >= t.from && score <= t.to) ?? themes[2];
+    }
+
+    function rectsOverlap(a, b) {
+      return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+    }
+
+    function shoot() {
+      if (state.shootCd > 0) return;
+      if (state.ammo <= 0) {
+        state.message = "No ammo";
+        state.messageTime = 45;
+        return;
+      }
+      const p = state.player;
+      const speed = p.facing === 1 ? 11 : -11;
+      state.bullets.push({
+        x: p.x + (p.facing === 1 ? p.w + 6 : -8),
+        y: p.y + 22,
+        w: 10,
+        h: 4,
+        vx: speed
+      });
+      state.ammo -= 1;
+      state.shootCd = 10;
+    }
+
+    function primaryControl() {
+      if (state.mode !== "run") {
+        if (state.roundCompleted) {
+          window.location.reload();
+          return;
+        }
+        resetGame();
+        return;
+      }
+      shoot();
+    }
+
+    function spawnEnemy() {
+      const t = themeForScore(state.score);
+      const baseHp = t.key === "G" ? 2 : 1;
+      const h = 44 + Math.random() * 16;
+      state.enemies.push({
+        x: canvas.width + 40,
+        y: GROUND_Y - h,
+        w: 30 + Math.random() * 16,
+        h,
+        vx: -(state.worldSpeed + 1.2 + Math.random() * 2),
+        hp: baseHp
+      });
+      const base = 52 - Math.min(26, Math.floor(state.score / 18));
+      state.enemyCd = base + Math.floor(Math.random() * 18);
+    }
+
+    function burst(x, y, color) {
+      for (let i = 0; i < 8; i += 1) {
+        state.particles.push({
+          x, y,
+          vx: (Math.random() - 0.5) * 5,
+          vy: -2 - Math.random() * 4,
+          life: 24 + Math.floor(Math.random() * 16),
+          color
+        });
+      }
+    }
+
+    function updateRun() {
+      const p = state.player;
+      state.time += 1;
+      state.worldSpeed = 5.8 + Math.min(2.7, state.score / 190);
+      state.shootCd = Math.max(0, state.shootCd - 1);
+      state.enemyCd -= 1;
+      state.invuln = Math.max(0, state.invuln - 1);
+      state.messageTime = Math.max(0, state.messageTime - 1);
+      state.elapsedFrames += 1;
+
+      if (state.enemyCd <= 0) spawnEnemy();
+
+      p.vx = 0;
+      if (keys["KeyA"] || keys["ArrowLeft"]) {
+        p.vx = -4.8;
+        p.facing = -1;
+      }
+      if (keys["KeyD"] || keys["ArrowRight"]) {
+        p.vx = 4.8;
+        p.facing = 1;
+      }
+
+      const wantsJump = keys["KeyW"] || keys["ArrowUp"] || keys["Space"];
+      if (wantsJump && p.grounded) {
+        p.vy = p.jumpPower;
+        p.grounded = false;
+      }
+
+      if (keys["KeyJ"]) shoot();
+
+      p.vy += 0.7;
+      p.x += p.vx;
+      p.y += p.vy;
+      if (p.y + p.h >= GROUND_Y) {
+        p.y = GROUND_Y - p.h;
+        p.vy = 0;
+        p.grounded = true;
+      }
+      p.x = Math.max(24, Math.min(320, p.x));
+
+      for (const b of state.bullets) b.x += b.vx;
+      state.bullets = state.bullets.filter((b) => b.x > -30 && b.x < canvas.width + 30);
+
+      for (const e of state.enemies) e.x += e.vx;
+      state.enemies = state.enemies.filter((e) => e.x + e.w > -30 && e.hp > 0);
+
+      const elapsedSeconds = Math.floor(state.elapsedFrames / 60);
+      if (elapsedSeconds > state.lastScoredSecond) {
+        const secondsDelta = elapsedSeconds - state.lastScoredSecond;
+        state.score += secondsDelta;
+        state.lastScoredSecond = elapsedSeconds;
+      }
+      const targetMaxAmmo = Math.min(state.maxAmmoCap, 3 + Math.floor(elapsedSeconds / 5));
+      if (targetMaxAmmo > state.maxAmmo) state.maxAmmo = targetMaxAmmo;
+      const ammoTick = Math.floor(elapsedSeconds / 3);
+      if (ammoTick > state.lastAmmoTick) {
+        const refill = ammoTick - state.lastAmmoTick;
+        state.ammo = Math.min(state.maxAmmo, state.ammo + refill);
+        state.lastAmmoTick = ammoTick;
+      }
+      while (
+        state.checkpointIndex < state.checkpoints.length &&
+        elapsedSeconds >= state.checkpoints[state.checkpointIndex].atSecond
+      ) {
+        const cp = state.checkpoints[state.checkpointIndex];
+        cp.received = true;
+        state.score += cp.bonus;
+        state.message = `${cp.label} +${cp.bonus}`;
+        state.messageTime = 80;
+        burst(state.player.x + state.player.w * 0.5, state.player.y, "#9cd2ff");
+        state.checkpointIndex += 1;
+      }
+
+      for (const b of state.bullets) {
+        for (const e of state.enemies) {
+          if (rectsOverlap(b, e)) {
+            b.x = canvas.width + 100;
+            e.hp -= 1;
+            if (e.hp <= 0) {
+              state.score += 10;
+              burst(e.x + e.w * 0.5, e.y + e.h * 0.4, themeForScore(state.score).accent);
+            }
+            break;
+          }
+        }
+      }
+
+      if (state.invuln === 0) {
+        for (const e of state.enemies) {
+          if (rectsOverlap(p, e)) {
+            state.playerHits += 1;
+            state.hp -= 18;
+            state.invuln = 50;
+            p.vx -= 6;
+            p.vy = -7;
+            burst(p.x + p.w * 0.5, p.y + p.h * 0.5, "#ff6a6a");
+            if (state.playerHits >= state.maxHits) {
+              state.mode = "over";
+            }
+            break;
+          }
+        }
+
+      }
+
+      for (const part of state.particles) {
+        part.x += part.vx;
+        part.y += part.vy;
+        part.vy += 0.24;
+        part.life -= 1;
+      }
+      state.particles = state.particles.filter((p2) => p2.life > 0);
+
+      if (state.elapsedFrames >= state.timeLimitFrames && state.mode === "run") {
+        state.timeUp = false;
+        state.mode = "win";
+      }
+      if (state.hp <= 0 || state.playerHits >= state.maxHits) state.mode = "over";
+      if (state.mode === "win" || state.mode === "over") state.roundCompleted = true;
+    }
+
+    function drawBackground(theme) {
+      const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+      grad.addColorStop(0, theme.skyA);
+      grad.addColorStop(1, theme.skyB);
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      const drift = (state.time * state.worldSpeed * 0.35) % canvas.width;
+      for (let i = 0; i < 6; i += 1) {
+        const x = ((i * 180 - drift) + canvas.width) % canvas.width;
+        ctx.fillStyle = "rgba(255,255,255,0.08)";
+        ctx.fillRect(x, 95 + (i % 2) * 40, 90, 18);
+      }
+
+      const finishX = state.mode === "win"
+        ? (canvas.width * 0.5 - 32)
+        : (canvas.width + 120);
+      ctx.fillStyle = "rgba(215,235,255,0.9)";
+      ctx.fillRect(finishX, GROUND_Y - 132, 8, 132);
+      ctx.fillStyle = "rgba(120,180,255,0.95)";
+      ctx.fillRect(finishX + 8, GROUND_Y - 126, 62, 36);
+      if (winLogoImg.complete) {
+        ctx.drawImage(winLogoImg, finishX + 12, GROUND_Y - 122, 28, 28);
+      }
+      ctx.fillStyle = "#061325";
+      ctx.font = "700 14px Segoe UI";
+      ctx.fillText("WIN", finishX + 44, GROUND_Y - 103);
+
+      ctx.fillStyle = theme.ground;
+      ctx.fillRect(0, GROUND_Y, canvas.width, canvas.height - GROUND_Y);
+      ctx.fillStyle = "rgba(255,255,255,0.1)";
+      ctx.fillRect(0, GROUND_Y - 8, canvas.width, 8);
+    }
+
+    function drawPlayer(theme) {
+      const p = state.player;
+      const flash = state.invuln > 0 && Math.floor(state.invuln / 4) % 2 === 0;
+      if (flash) return;
+      const jumpHeight = Math.max(0, GROUND_Y - (p.y + p.h));
+      const shadowScale = 1 - Math.min(0.55, jumpHeight / 160);
+      ctx.save();
+      ctx.fillStyle = "rgba(3,8,16,0.45)";
+      ctx.beginPath();
+      ctx.ellipse(p.x + p.w / 2, GROUND_Y - 3, 20 * shadowScale, 7 * shadowScale, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
+      if (playerImg.complete) {
+        ctx.save();
+        ctx.translate(p.x + p.w / 2, p.y + p.h / 2);
+        ctx.rotate(Math.max(-0.22, Math.min(0.22, p.vy * 0.02)));
+        const scale = 1 + Math.min(0.18, jumpHeight / 260);
+        const size = Math.max(p.w, p.h) * scale;
+        const radius = size * 0.5;
+
+        // GitHub-like avatar badge treatment while keeping the Newsec brand image content.
+        ctx.globalAlpha = 0.25;
+        ctx.beginPath();
+        ctx.arc(3, 4, radius, 0, Math.PI * 2);
+        ctx.fillStyle = "#000000";
+        ctx.fill();
+
+        ctx.globalAlpha = 1;
+        const badgeGrad = ctx.createRadialGradient(-radius * 0.35, -radius * 0.4, radius * 0.2, 0, 0, radius);
+        badgeGrad.addColorStop(0, "#2f435f");
+        badgeGrad.addColorStop(1, "#0f1d2f");
+        ctx.beginPath();
+        ctx.arc(0, 0, radius, 0, Math.PI * 2);
+        ctx.fillStyle = badgeGrad;
+        ctx.fill();
+
+        ctx.beginPath();
+        ctx.arc(0, 0, radius * 0.88, 0, Math.PI * 2);
+        ctx.strokeStyle = "#dbe9ff";
+        ctx.lineWidth = Math.max(2, radius * 0.12);
+        ctx.stroke();
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(0, 0, radius * 0.74, 0, Math.PI * 2);
+        ctx.clip();
+        ctx.drawImage(playerImg, -radius * 0.74, -radius * 0.74, radius * 1.48, radius * 1.48);
+        ctx.restore();
+
+        ctx.globalAlpha = 0.23;
+        ctx.beginPath();
+        ctx.ellipse(-radius * 0.24, -radius * 0.4, radius * 0.28, radius * 0.18, -0.35, 0, Math.PI * 2);
+        ctx.fillStyle = "#ffffff";
+        ctx.fill();
+        ctx.restore();
+      } else {
+        ctx.fillStyle = theme.accent;
+        ctx.fillRect(p.x, p.y, p.w, p.h);
+      }
+    }
+
+    function drawEntities(theme) {
+      ctx.fillStyle = "#ffe17c";
+      for (const b of state.bullets) ctx.fillRect(b.x, b.y, b.w, b.h);
+
+      ctx.fillStyle = theme.accent;
+      for (const e of state.enemies) {
+        ctx.fillRect(e.x, e.y, e.w, e.h);
+        ctx.fillStyle = "rgba(10,20,40,0.5)";
+        ctx.fillRect(e.x + 6, e.y + 8, e.w - 12, 8);
+        ctx.fillStyle = theme.accent;
+      }
+
+      for (const p of state.particles) {
+        ctx.fillStyle = p.color;
+        ctx.fillRect(p.x, p.y, 3, 3);
+      }
+    }
+
+    function drawOverlay() {
+      if (state.mode === "run") return;
+      ctx.fillStyle = "rgba(3,8,16,0.62)";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.textAlign = "center";
+      ctx.fillStyle = "#e7f1ff";
+      ctx.font = "700 44px Segoe UI";
+      if (state.mode === "start") ctx.fillText("Press Enter", canvas.width / 2, 220);
+      if (state.mode === "win") ctx.fillText("ESG WON", canvas.width / 2, 220);
+      if (state.mode === "over") ctx.fillText(state.timeUp ? "Time Up" : "Game Over", canvas.width / 2, 220);
+      if (state.mode === "win" && winLogoImg.complete) {
+        const pulse = 1 + Math.sin(state.uiTick * 0.18) * 0.08;
+        const iconSize = 54 * pulse;
+        ctx.drawImage(winLogoImg, canvas.width / 2 - iconSize / 2, 138 - iconSize / 2, iconSize, iconSize);
+        for (let i = 0; i < 8; i += 1) {
+          const angle = (Math.PI * 2 * i) / 8 + state.uiTick * 0.08;
+          const r = 44 + Math.sin(state.uiTick * 0.12 + i) * 4;
+          const x = canvas.width / 2 + Math.cos(angle) * r;
+          const y = 140 + Math.sin(angle) * r;
+          ctx.fillStyle = i % 2 === 0 ? "#9fd2ff" : "#ffe37a";
+          ctx.fillRect(x - 2, y - 2, 4, 4);
+        }
+      }
+      ctx.font = "500 20px Segoe UI";
+      const subtitle = state.mode === "start"
+        ? "30s round: E at 10s, S at 20s, G at 30s"
+        : state.mode === "win"
+          ? "Final clear - Click to start fresh"
+          : "Round over - Enter/Click for fresh start";
+      ctx.fillText(subtitle, canvas.width / 2, 265);
+      if (state.mode !== "start") {
+        ctx.font = "600 24px Segoe UI";
+        ctx.fillText(`Score ${state.score}`, canvas.width / 2, 310);
+      }
+      ctx.textAlign = "left";
+    }
+
+    function drawMessage() {
+      if (state.messageTime <= 0 || state.mode !== "run") return;
+      ctx.fillStyle = "rgba(5,12,24,0.55)";
+      ctx.fillRect(canvas.width / 2 - 80, 20, 160, 34);
+      ctx.fillStyle = "#d9ecff";
+      ctx.font = "600 18px Segoe UI";
+      ctx.textAlign = "center";
+      ctx.fillText(state.message, canvas.width / 2, 43);
+      ctx.textAlign = "left";
+    }
+
+    function drawControlInfo() {
+      ctx.fillStyle = "rgba(4, 10, 20, 0.45)";
+      ctx.fillRect(14, 14, 300, 66);
+      ctx.fillStyle = "#d9e9ff";
+      ctx.font = "600 13px Segoe UI";
+      ctx.fillText("A/D: Move   W/Space: Jump", 24, 40);
+      ctx.fillText("J/Enter/Click: Shoot (limited)   End: refresh", 24, 62);
+    }
+
+    function updateHud() {
+      const t = themeForScore(state.score).key;
+      hudLevel.textContent = t;
+      hudScore.textContent = `${state.score}`;
+      hudHp.textContent = `${Math.max(0, state.hp)}`;
+      hudAmmo.textContent = `${state.ammo}/${state.maxAmmo}`;
+      const received = state.checkpoints.filter((cp) => cp.received).map((cp) => cp.label).join(" ");
+      hudEsg.textContent = received || "- - -";
+      const remaining = Math.max(0, Math.ceil((state.timeLimitFrames - state.elapsedFrames) / 60));
+      const mm = String(Math.floor(remaining / 60)).padStart(2, "0");
+      const ss = String(remaining % 60).padStart(2, "0");
+      hudTime.textContent = `${mm}:${ss}`;
+    }
+
+    function frame() {
+      if (state.mode === "run") state.uiTick += 1;
+      if (state.mode === "run") updateRun();
+      const theme = themeForScore(state.score);
+      drawBackground(theme);
+      drawPlayer(theme);
+      drawEntities(theme);
+      drawControlInfo();
+      drawMessage();
+      drawOverlay();
+      updateHud();
+      requestAnimationFrame(frame);
+    }
+
+    window.addEventListener("keydown", (e) => {
+      keys[e.code] = true;
+      if (e.code === "Enter") primaryControl();
+      if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"].includes(e.code)) e.preventDefault();
+    });
+
+    window.addEventListener("keyup", (e) => {
+      keys[e.code] = false;
+    });
+
+    canvas.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      primaryControl();
+    });
+
+    canvas.addEventListener("touchstart", (e) => {
+      e.preventDefault();
+      primaryControl();
+    }, { passive: false });
+
+    frame();
+  </script>
+</body>
+</html>
